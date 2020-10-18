@@ -1,9 +1,7 @@
 from django.contrib.auth.models import AnonymousUser
-from django.http.request import HttpRequest
 from django.test import Client, TestCase
 from django.urls import reverse
 from django.core.cache import cache
-from django.utils.cache import get_cache_key, learn_cache_key
 
 from posts.models import Comment, Group, Post, User
 
@@ -139,9 +137,9 @@ class TestPostsApp(TestCase):
                     )
 
     def test_post_edit(self):
-        group = Group.objects.create(title='NewGroup', slug='NewGroup')
         post, pages = self.prepare_post_pages()
         posts_now = Post.objects.all().count()
+        group = Group.objects.create(title='NewGroup', slug='NewGroup')
         data = {
             'text': 'New Test Text',
             'group': group.id
@@ -317,6 +315,7 @@ class TestPostsApp(TestCase):
         )
         self.assertIn(post, response_1.context['paginator'].object_list)
         self.assertNotIn(post, response_2.context['paginator'].object_list)
+
 
 class TestServerResponses(TestCase):
     def setUp(self):
