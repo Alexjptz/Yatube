@@ -12,6 +12,10 @@ class Group(models.Model):
     )
     description = models.TextField()
 
+    class Meta:
+        verbose_name = 'Группа'
+        verbose_name_plural = 'Группы'
+
     def __str__(self):
         return self.title
 
@@ -43,11 +47,14 @@ class Post(models.Model):
     image = models.ImageField(
         upload_to='posts/',
         blank=True,
-        null=True
+        null=True,
+        verbose_name='Изображение'
     )
 
     class Meta:
         ordering = ['-pub_date']
+        verbose_name = 'Запись'
+        verbose_name_plural = 'Записи'
 
     def __str__(self):
         author = self.author
@@ -88,11 +95,18 @@ class Follow(models.Model):
         User,
         null=True,
         on_delete=models.CASCADE,
-        related_name='follower'
+        related_name='follower',
+        verbose_name='Пользователь'
     )
     author = models.ForeignKey(
         User,
         null=True,
         on_delete=models.CASCADE,
-        related_name='following'
+        related_name='following',
+        verbose_name='Автор'
     )
+
+    class Meta:
+        unique_together = ('user', 'author')
+        verbose_name = 'Подписка'
+        verbose_name_plural = 'Подписки'

@@ -9,14 +9,14 @@ from .models import Follow, Group, Post, User
 
 @cache_page(20, key_prefix='index_page')
 def index(request):
-    post_list = Post.objects.all()
+    post_list = Post.objects.select_related('author', 'group').all()
     paginator = Paginator(post_list, 10)
     page_number = request.GET.get('page')
     page = paginator.get_page(page_number)
     return render(
         request,
         'index.html',
-        {'page': page, 'paginator': paginator}
+        {'page': page, 'paginator': paginator, 'index': True}
         )
 
 
@@ -39,12 +39,12 @@ def profile(request, username):
     paginator = Paginator(post_list, 10)
     page_number = request.GET.get('page')
     page = paginator.get_page(page_number)
-    subscribe = False
-    if request.user.is_authenticated:
-        subscribe = Follow.objects.filter(
-            user=request.user,
-            author=author
-        ).exists()
+    # subscribe = False
+    # if request.user.is_authenticated:
+    subscribe = request.user.is_authenticated and Follow.objects.filter(
+        user=request.user,
+        author=author
+    ).exists()
     return render(request, 'posts/profile.html', {
         'page': page,
         'paginator': paginator,
@@ -56,7 +56,7 @@ def profile(request, username):
 
 def post(request, username, post_id):
     post = get_object_or_404(Post, author__username=username, id=post_id)
-    form = CommentForm(request.POST or None)
+    form = CommentForm()
     return render(request, 'posts/profile.html', {
         'post': post,
         'author': post.author,
@@ -68,13 +68,11 @@ def post(request, username, post_id):
 @login_required
 def new_post(request):
     form = PostForm(request.POST or None, request.FILES or None)
-    if request.method == 'POST':
-        if form.is_valid():
-            post = form.save(commit=False)
-            post.author = request.user
-            post.save()
-            return redirect('index')
-        return render(request, 'posts/new_post.html', {'form': form})
+    if form.is_valid():
+        post = form.save(commit=False)
+        post.author = request.user
+        post.save()
+        return redirect('index')
     return render(request, 'posts/new_post.html', {'form': form})
 
 
@@ -121,7 +119,7 @@ def follow_index(request):
     return render(
         request,
         'posts/follow.html',
-        {'page': page, 'paginator': paginator}
+        {'page': page, 'paginator': paginator, 'follow': True}
         )
 
 
@@ -133,7 +131,7 @@ def profile_follow(request, username):
             user=request.user,
             author=author
         )
-    return redirect('profile', username=author.username)
+    return redirect('profile', author)
 
 
 @login_required
@@ -144,7 +142,7 @@ def profile_unfollow(request, username):
         author=author
     )
     follow_to_delete.delete()
-    return redirect('profile', username=author.username)
+    return redirect('profile', author)
 
 
 def page_not_found(request, exception):

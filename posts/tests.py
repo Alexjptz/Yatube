@@ -1,11 +1,17 @@
+import shutil
+
 from django.contrib.auth.models import AnonymousUser
-from django.test import Client, TestCase
-from django.urls import reverse
 from django.core.cache import cache
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import Client, TestCase, override_settings
+from django.urls import reverse
 
-from posts.models import Comment, Group, Post, User
+from posts.models import Comment, Follow, Group, Post, User
+
+TEST_DIR = 'test_data'
 
 
+@override_settings(MEDIA_ROOT=(TEST_DIR + '/media'))
 class TestPostsApp(TestCase):
     def setUp(self):
         self.client_anon = Client()
@@ -19,7 +25,7 @@ class TestPostsApp(TestCase):
         self.client_auth.force_login(self.author)
         cache.clear()
 
-    def prepare_post_pages(self):
+    def prepare_post_pages(self, group):
         post = Post.objects.create(
             text=self.text,
             author=self.author,
@@ -29,9 +35,56 @@ class TestPostsApp(TestCase):
             reverse('index'),
             reverse('profile', args=[self.author.username]),
             reverse('post', args=[self.author.username, post.id]),
-            reverse('group', args=[post.group.slug]),
+            reverse('group', args=[group.slug]),
             )
         return post, pages
+
+    def upload_img_file(self):
+        small_gif = (
+            b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x00\x00\x00\x21\xf9\x04'
+            b'\x01\x0a\x00\x01\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02'
+            b'\x02\x4c\x01\x00\x3b'
+        )
+        file = SimpleUploadedFile(
+            'small.jpg',
+            content=small_gif,
+            content_type='image/jpg'
+        )
+        return file
+
+    def post_testing_pages_content(self, post, pages):
+        for page in pages:
+            with self.subTest(page=page):
+                response = self.client_anon.get(page)
+                self.assertEqual(
+                    response.status_code,
+                    200,
+                    msg=f'{page} работает не правильно, проверь'
+                )
+                if 'paginator' in response.context:
+                    self.assertEqual(
+                        response.context['paginator'].count,
+                        1,
+                        msg='В paginator пусто'
+                    )
+                    post = response.context['page'][0]
+                else:
+                    post = response.context['post']
+                self.assertEquals(
+                    post.author,
+                    response.context['post'].author,
+                    msg='Несоответствие в поле author'
+                )
+                self.assertEquals(
+                    post.group,
+                    response.context['post'].group,
+                    msg='Несоответствие в поле group'
+                )
+                self.assertEquals(
+                    post.text,
+                    response.context['post'].text,
+                    msg='Несоответствие в поле text'
+                )
 
     def test_profile(self):
         response = self.client_anon.get(
@@ -43,7 +96,7 @@ class TestPostsApp(TestCase):
             msg='проверь страницу профайла пользователя'
             )
 
-    def test_anononymos_new_post(self):
+    def test_anonymous_new_post(self):
         posts_now = Post.objects.count()
         response = self.client_anon.post(
             reverse('new_post'),
@@ -70,9 +123,9 @@ class TestPostsApp(TestCase):
         response = self.client_auth.post(
             reverse('new_post'),
             data,
-            folow=True)
+            follow=True)
         posts_after = Post.objects.count()
-        post = Post.objects.get(pk=1)
+        post = response.context['page'][0]
         self.assertNotEqual(
             posts_now,
             posts_after,
@@ -80,66 +133,33 @@ class TestPostsApp(TestCase):
         )
         self.assertEqual(
             response.status_code,
-            302,
+            200,
             msg='редирект не работает'
         )
-        # self.assertEqual(
-        #     self.author,
-        #     post.author,
-        #     msg='Поле author в базу записано не верно'
-        # )
-        # self.assertEqual(
-        #     self.group,
-        #     post.group,
-        #     msg='Поле группа в базу записано не верно'
-        # )
-        # self.assertEqual(
-        #     self.text,
-        #     post.text,
-        #     msg='Поле text в базу записано не верно'
-        # )
+        self.assertEqual(
+            self.author,
+            post.author,
+            msg='Проверь поле author'
+        )
+        self.assertEqual(
+            self.group,
+            post.group,
+            msg='Проверь поле group'
+        )
+        self.assertEqual(
+            self.text,
+            post.text,
+            msg='Проверь поле text'
+        )
 
     def test_post_exists_at_pages(self):
-        post, pages = self.prepare_post_pages()
-        for page in pages:
-            with self.subTest():
-                response = self.client_auth.get(page)
-                self.assertEqual(
-                    response.status_code,
-                    200,
-                    msg=f'{page} работает не правильно, проверь'
-                )
-                if 'paginator' in response.context:
-                    self.assertEqual(
-                        response.context['paginator'].count,
-                        1
-                    )
-                    self.assertIn(
-                        post,
-                        response.context['paginator'].object_list,
-                        msg=f'Пост отсутствует в {page} Paginator, проверь'
-                    )
-                else:
-                    self.assertEquals(
-                        post.author,
-                        response.context['post'].author,
-                        msg=f'Пост отсутствует в context {page}'
-                    )
-                    self.assertEquals(
-                        post.group,
-                        response.context['post'].group,
-                        msg=f'Пост отсутствует в context {page}'
-                    )
-                    self.assertEquals(
-                        post.author,
-                        response.context['post'].author,
-                        msg=f'Пост отсутствует в context {page}'
-                    )
+        post, pages = self.prepare_post_pages(self.group)
+        self.post_testing_pages_content(post, pages)
 
     def test_post_edit(self):
-        post, pages = self.prepare_post_pages()
-        posts_now = Post.objects.all().count()
         group = Group.objects.create(title='NewGroup', slug='NewGroup')
+        post, pages = self.prepare_post_pages(group)
+        posts_now = Post.objects.all().count()
         data = {
             'text': 'New Test Text',
             'group': group.id
@@ -160,80 +180,44 @@ class TestPostsApp(TestCase):
             200,
             msg='Проверь переадресацию после редактирования поста'
         )
-        for page in pages:
-            print(page)
-            print(response.context)
-            with self.subTest(page=page):
-                response = self.client_auth.get(page)
-                self.assertEqual(
-                    response.status_code,
-                    200,
-                    msg=f'{page} работает не правильно, проверь'
-                )
-                if 'paginator' in response.context:
-                    print(response.context['paginator'].object_list)
-                    self.assertEqual(
-                        response.context['paginator'].count,
-                        1,
-                        msg='В paginator пусто'
-                    )
-                    self.assertIn(
-                        post,
-                        response.context['paginator'].object_list,
-                        msg=f'Пост отсутствует в {page} Paginator, проверь'
-                    )
-                else:
-                    self.assertEquals(
-                        post.author,
-                        response.context['post'].author,
-                        msg=f'Пост отсутствует в context {page}'
-                    )
-                    self.assertEquals(
-                        post.group,
-                        response.context['post'].group,
-                        msg=f'Пост отсутствует в context {page}'
-                    )
-                    self.assertEquals(
-                        post.author,
-                        response.context['post'].author,
-                        msg=f'Пост отсутствует в context {page}'
-                    )
+        self.post_testing_pages_content(post, pages)
 
-    def test_post_image_tag(self):
-        with open('media/posts/1.jpg', 'rb') as img:
-            response = self.client_auth.post(reverse('new_post'), {
-                'text': 'post with image',
-                'image': img},
-                follow=True
-            )
-            self.assertContains(response, '<img')
-
-    def test_image_tags_in_pages(self):
-        post, pages = self.prepare_post_pages()
-        with open('media/posts/1.jpg', 'rb') as img:
-            response = self.client_auth.post(
-                reverse('post_edit', args=[post.author, post.id]), {
-                    'author': self.author,
-                    'group': self.group.id,
-                    'text': 'post with image',
-                    'image': img
-                    },
-                follow=True
-            )
+    def test_image_tag_in_pages(self):
+        post, pages = self.prepare_post_pages(self.group)
+        file = self.upload_img_file()
+        data = {
+            'author': self.author,
+            'group': self.group.id,
+            'text': 'with image',
+            'image': file
+        }
+        response = self.client_auth.post(
+            reverse('post_edit', args=[post.author, post.id]),
+            data,
+            follow=True
+        )
         for page in pages:
-            response = self.client_auth.get(page)
             with self.subTest('Тега нет на странице ' + page):
+                response = self.client_anon.get(page)
                 self.assertContains(response, '<img')
 
     def test_upload_not_img(self):
-        with open('media/posts/not_image_file.txt', 'rb') as img:
-            response = self.client_auth.post(reverse('new_post'), {
-                'author': self.author,
-                'group': self.group.id,
-                'text': 'post with image',
-                'image': img},
-                follow=True
-            )
+        file = SimpleUploadedFile(
+            'text.txt',
+            content=b'TextText',
+            content_type='text/plain'
+        )
+        data = {
+            'author': self.author,
+            'group': self.group.id,
+            'text': 'with image',
+            'image': file
+        }
+        response = self.client_auth.post(
+            reverse('new_post'),
+            data,
+            follow=True
+        )
         self.assertFormError(
              response,
              'form',
@@ -241,6 +225,11 @@ class TestPostsApp(TestCase):
              'Загрузите правильное изображение. '
              'Файл, который вы загрузили, '
              'поврежден или не является изображением.'
+        )
+        self.assertEqual(
+            Post.objects.count(),
+            0,
+            msg='Запись не должна добовляться, проверь'
         )
 
     def test_index_cache(self):
@@ -257,15 +246,49 @@ class TestPostsApp(TestCase):
         self.assertNotEqual(response_1.content, response_3.content)
 
     def test_auth_user_comment(self):
-        post, pages = self.prepare_post_pages()
-        self.client_auth.post(reverse(
+        post, pages = self.prepare_post_pages(self.group)
+        data = {'text': 'Коммент'}
+        self.client_auth.post(
+            reverse('add_comment', args=[post.author, post.id]),
+            data,
+            follow=True
+        )
+        self.assertEqual(
+            Comment.objects.count(),
+            1,
+            msg='Запись не комментируется'
+        )
+        comment = Comment.objects.first()
+        self.assertEqual(
+            comment.text,
+            data['text'],
+            msg='Проверь текст комментария'
+        )
+        self.assertEqual(
+            comment.author,
+            post.author,
+            msg='Проверь автора комментария'
+        )
+        self.assertTrue(
+            post.comments.get(id=comment.id),
+            msg='Комментарий добавлен, но не соответствует записи'
+        )
+
+    def test_anon_user_comment(self):
+        post, pages = self.prepare_post_pages(self.group)
+        data = {'text': 'Коммент'}
+        self.client_anon.post(reverse(
             'add_comment',
             args=[
                 post.author,
                 post.id]),
-            {'text': 'Коммент'},
+            data,
             follow=True)
-        self.assertEqual(Comment.objects.count(), 1)
+        self.assertEqual(
+            Comment.objects.count(),
+            0,
+            msg='Не авторизированный пользователь может комментировать'
+        )
 
     def test_auth_user_subscribe(self):
         author = User.objects.create(username='NewAuthor')
@@ -273,48 +296,68 @@ class TestPostsApp(TestCase):
             'profile_follow',
             args=[author.username])
         )
-        response_follow = self.client_auth.get(
-            reverse('profile', args=[author.username])
+        self.assertEqual(
+            Follow.objects.all().count(),
+            1
         )
+        self.assertTrue(
+            Follow.objects.filter(user=self.author, author=author),
+            msg='Не удается подписаться на пользователя'
+        )
+
+    def test_auth_user_unsubscribe(self):
+        author = User.objects.create(username='NewAuthor')
+        Follow.objects.create(
+            user=self.author,
+            author=author)
         self.client_auth.post(
             reverse('profile_unfollow', args=[author.username])
         )
-        response_unfollow = self.client_auth.get(
-            reverse('profile', args=[author.username])
+        self.assertEqual(
+            Follow.objects.all().count(),
+            0
         )
-        with self.subTest():
-            self.assertTrue(
-                response_follow.context['subscribe'],
-                msg='Не удается подписаться на автора'
-            )
-        with self.subTest():
-            self.assertFalse(
-                response_unfollow.context['subscribe'],
-                msg='Не удается отписаться от автора'
-            )
+        self.assertFalse(
+            Follow.objects.filter(user=self.author, author=author),
+            msg='Не удается отписаться на пользователя'
+        )
 
-    def test_follow_index(self):
+    def test_follow_index_of_subscribed_user(self):
+        post, pages = self.prepare_post_pages(self.group)
         author = User.objects.create(username="NewAuthor")
-        post = Post.objects.create(
-            text=self.text,
-            author=author,
-            group=self.group
+        Follow.objects.create(
+            user=author,
+            author=self.author
         )
-        user_1 = User.objects.create(username="newUser")
-        user_2 = User.objects.create(username="newUser2")
-        self.client_auth.force_login(user_1)
-        self.client_auth.post(
-            reverse('profile_follow', args=[author.username])
+        self.client_auth.force_login(author)
+        response = self.client_auth.get(reverse('follow_index'))
+        post = response.context['page'][0]
+        self.assertEquals(
+            post.author,
+            response.context['post'].author,
+            msg='Проверь поле author'
         )
-        response_1 = self.client_auth.get(
-            reverse('follow_index')
+        self.assertEquals(
+            post.group,
+            response.context['post'].group,
+            msg='Проверь поле group'
         )
-        self.client_auth.force_login(user_2)
-        response_2 = self.client_auth.get(
-            reverse('follow_index')
+        self.assertEquals(
+            post.text,
+            response.context['post'].text,
+            msg='Проверь поле text'
         )
-        self.assertIn(post, response_1.context['paginator'].object_list)
-        self.assertNotIn(post, response_2.context['paginator'].object_list)
+
+    def test_follow_index_of_unsubscribed_user(self):
+        post, pages = self.prepare_post_pages(self.group)
+        author = User.objects.create(username="NewAuthor")
+        self.client_auth.force_login(author)
+        response = self.client_auth.get(reverse('follow_index'))
+        self.assertEqual(
+            response.context['paginator'].object_list.count(),
+            0,
+            msg='Запись появляется на странице подписок'
+        )
 
 
 class TestServerResponses(TestCase):
@@ -329,3 +372,11 @@ class TestServerResponses(TestCase):
             404,
             msg='Страница 404 не работает'
         )
+
+
+def tearDownModule():
+    print('\nDeleting temporary files...\n')
+    try:
+        shutil.rmtree(TEST_DIR)
+    except OSError:
+        pass
