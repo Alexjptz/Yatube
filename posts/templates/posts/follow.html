@@ -3,7 +3,7 @@
 {% block header %}Подписки: последние обновления{% endblock %}
 {% block content %}
     <div class="container">
-        {% include 'includes/menu.html' %}
+        {% include 'includes/menu.html' with follow=True %}
     {% for post in page %}
         {% include "posts/post_item.html" with post=post %}
     {% endfor %}

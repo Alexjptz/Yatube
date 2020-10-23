@@ -56,35 +56,38 @@ class TestPostsApp(TestCase):
         for page in pages:
             with self.subTest(page=page):
                 response = self.client_anon.get(page)
-                self.assertEqual(
-                    response.status_code,
-                    200,
-                    msg=f'{page} работает не правильно, проверь'
-                )
-                if 'paginator' in response.context:
-                    self.assertEqual(
-                        response.context['paginator'].count,
-                        1,
-                        msg='В paginator пусто'
-                    )
-                    post = response.context['page'][0]
-                else:
-                    post = response.context['post']
-                self.assertEquals(
-                    post.author,
-                    response.context['post'].author,
-                    msg='Несоответствие в поле author'
-                )
-                self.assertEquals(
-                    post.group,
-                    response.context['post'].group,
-                    msg='Несоответствие в поле group'
-                )
-                self.assertEquals(
-                    post.text,
-                    response.context['post'].text,
-                    msg='Несоответствие в поле text'
-                )
+                self.post_content_page_test(response, post)
+
+    def post_content_page_test(self, response, post):
+        self.assertEqual(
+            response.status_code,
+            200,
+            msg='Страница работает не правильно, проверь'
+        )
+        if 'paginator' in response.context:
+            self.assertEqual(
+                response.context['paginator'].count,
+                1,
+                msg='В paginator пусто'
+            )
+            post_at_page = response.context['page'][0]
+        else:
+            post_at_page = response.context['post']
+        self.assertEquals(
+            post.author,
+            post_at_page.author,
+            msg='Несоответствие в поле author'
+        )
+        self.assertEquals(
+            post.group,
+            post_at_page.group,
+            msg='Несоответствие в поле group'
+        )
+        self.assertEquals(
+            post.text,
+            post_at_page.text,
+            msg='Несоответствие в поле text'
+        )
 
     def test_profile(self):
         response = self.client_anon.get(
@@ -119,18 +122,16 @@ class TestPostsApp(TestCase):
 
     def test_user_new_post(self):
         data = {'text': self.text, 'group': self.group.id}
-        posts_now = Post.objects.count()
         response = self.client_auth.post(
             reverse('new_post'),
             data,
             follow=True)
-        posts_after = Post.objects.count()
-        post = response.context['page'][0]
-        self.assertNotEqual(
-            posts_now,
-            posts_after,
+        self.assertEqual(
+            Post.objects.count(),
+            1,
             msg='Пост не записывается в базу'
         )
+        post = Post.objects.last()
         self.assertEqual(
             response.status_code,
             200,
@@ -159,7 +160,7 @@ class TestPostsApp(TestCase):
     def test_post_edit(self):
         group = Group.objects.create(title='NewGroup', slug='NewGroup')
         post, pages = self.prepare_post_pages(group)
-        posts_now = Post.objects.all().count()
+        posts_now = Post.objects.count()
         data = {
             'text': 'New Test Text',
             'group': group.id
@@ -167,8 +168,9 @@ class TestPostsApp(TestCase):
         response = self.client_auth.post(
             reverse('post_edit', args=[self.author, post.id]),
             data,
-            follow=True)
-        posts_after = Post.objects.all().count()
+            follow=True
+        )
+        posts_after = Post.objects.count()
         post.refresh_from_db()
         self.assertEqual(
             posts_now,
@@ -203,9 +205,9 @@ class TestPostsApp(TestCase):
 
     def test_upload_not_img(self):
         file = SimpleUploadedFile(
-            'text.txt',
+            'Image.jpg',
             content=b'TextText',
-            content_type='text/plain'
+            content_type='image/jpg'
         )
         data = {
             'author': self.author,
@@ -269,9 +271,10 @@ class TestPostsApp(TestCase):
             post.author,
             msg='Проверь автора комментария'
         )
-        self.assertTrue(
-            post.comments.get(id=comment.id),
-            msg='Комментарий добавлен, но не соответствует записи'
+        self.assertEqual(
+            comment.post,
+            post,
+            msg='Комментарий не соответствует записи'
         )
 
     def test_anon_user_comment(self):
@@ -309,16 +312,14 @@ class TestPostsApp(TestCase):
         author = User.objects.create(username='NewAuthor')
         Follow.objects.create(
             user=self.author,
-            author=author)
+            author=author
+        )
         self.client_auth.post(
             reverse('profile_unfollow', args=[author.username])
         )
         self.assertEqual(
             Follow.objects.all().count(),
-            0
-        )
-        self.assertFalse(
-            Follow.objects.filter(user=self.author, author=author),
+            0,
             msg='Не удается отписаться на пользователя'
         )
 
@@ -331,30 +332,20 @@ class TestPostsApp(TestCase):
         )
         self.client_auth.force_login(author)
         response = self.client_auth.get(reverse('follow_index'))
-        post = response.context['page'][0]
-        self.assertEquals(
-            post.author,
-            response.context['post'].author,
-            msg='Проверь поле author'
-        )
-        self.assertEquals(
-            post.group,
-            response.context['post'].group,
-            msg='Проверь поле group'
-        )
-        self.assertEquals(
-            post.text,
-            response.context['post'].text,
-            msg='Проверь поле text'
-        )
+        self.post_content_page_test(response, post)
 
     def test_follow_index_of_unsubscribed_user(self):
         post, pages = self.prepare_post_pages(self.group)
-        author = User.objects.create(username="NewAuthor")
-        self.client_auth.force_login(author)
+        user_1 = User.objects.create(username='NewUser_1')
+        user_2 = User.objects.create(username='NewUser_2')
+        Follow.objects.create(
+            user=user_1,
+            author=self.author
+        )
+        self.client_auth.force_login(user_2)
         response = self.client_auth.get(reverse('follow_index'))
         self.assertEqual(
-            response.context['paginator'].object_list.count(),
+            response.context['paginator'].count,
             0,
             msg='Запись появляется на странице подписок'
         )
