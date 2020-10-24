@@ -300,7 +300,7 @@ class TestPostsApp(TestCase):
             args=[author.username])
         )
         self.assertEqual(
-            Follow.objects.all().count(),
+            Follow.objects.count(),
             1
         )
         self.assertTrue(
@@ -318,7 +318,7 @@ class TestPostsApp(TestCase):
             reverse('profile_unfollow', args=[author.username])
         )
         self.assertEqual(
-            Follow.objects.all().count(),
+            Follow.objects.count(),
             0,
             msg='Не удается отписаться на пользователя'
         )
